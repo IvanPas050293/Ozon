@@ -1,0 +1,30 @@
+spring:
+  application:
+    name: ozon-bot
+  datasource:
+    url: jdbc:h2:file:./data/botdb;AUTO_SERVER=TRUE
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: ""
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+  jackson:
+    time-zone: Europe/Moscow
+
+telegram:
+  bot:
+    username: ${BOT_USERNAME:ozon_analytics_bot}
+    token: ${BOT_TOKEN:}
+
+app:
+  # Система налогообложения: 1=УСН Доходы, 2=УСН Доходы-Расходы, 3=не считать налог, 4=от оплаты на Р/С
+  tax-system: ${TAX_SYSTEM:1}
+  tax-rate: ${TAX_RATE:0.06}
+  # Разрешённые chat_id через запятую (пусто = открыт всем; в проде заполнить)
+  allowed-chat-ids: ${ALLOWED_CHAT_IDS:}
+
+logging:
+  level:
+    com.alnative.ozon: INFO

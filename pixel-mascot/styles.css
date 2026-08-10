@@ -1,0 +1,124 @@
+/* ===== Базовое ===== */
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  overflow: hidden;
+  background-color: #1c2719;
+  background-image:
+    linear-gradient(rgba(196, 208, 166, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(196, 208, 166, 0.04) 1px, transparent 1px),
+    radial-gradient(110% 70% at 50% -8%, rgba(216, 226, 172, 0.16), transparent 58%),
+    linear-gradient(180deg, #40533a 0%, #283523 58%, #141d13 100%);
+  background-size: 24px 24px, 24px 24px, 100% 100%, 100% 100%;
+  color: #eae3cf;
+  font-family: "Courier New", Courier, monospace;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ===== Шапка и счётчик ===== */
+.page-header {
+  position: fixed;
+  top: 0;
+  left: 0;
+  padding: 20px 24px;
+  z-index: 5;
+  pointer-events: none;
+  user-select: none;
+}
+
+.page-header h1 {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: #cd7b5a; /* цвет маскота */
+  text-shadow: 2px 2px 0 rgba(0, 0, 0, 0.6);
+}
+
+.counter {
+  margin-top: 6px;
+  font-size: 13px;
+  color: #a9b894;
+}
+
+.counter b {
+  color: #f0e6cd;
+}
+
+.hint {
+  position: fixed;
+  bottom: 16px;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-size: 12px;
+  color: #93a383;
+  pointer-events: none;
+  user-select: none;
+}
+
+/* ===== Маскот ===== */
+.mascot {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 10;
+  pointer-events: none; /* клики проходят сквозь маскота */
+  will-change: left, top;
+}
+
+.mascot img {
+  display: block;
+  width: 128px;
+  height: auto;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+  animation: bob 0.6s ease-in-out infinite alternate;
+  filter: drop-shadow(0 4px 0 rgba(0, 0, 0, 0.45));
+}
+
+@keyframes bob {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(-4px);
+  }
+}
+
+/* ===== Подсказка ===== */
+.tip {
+  position: fixed;
+  z-index: 100;
+  max-width: 320px;
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #eae3cf;
+  background: #1d281b;
+  border: 2px solid #d68b63;
+  box-shadow: 4px 4px 0 rgba(0, 0, 0, 0.45);
+  pointer-events: none;
+  user-select: none;
+  white-space: normal;
+  word-wrap: break-word;
+}
+
+.tip[hidden] {
+  display: none;
+}
+
+.tip::before {
+  content: "▸";
+  color: #d68b63;
+  margin-right: 6px;
+}
