@@ -13,6 +13,7 @@ import com.alnative.ozon.parser.model.ExcelRole;
 import com.alnative.ozon.parser.model.NagruzheniyaReport;
 import com.alnative.ozon.parser.model.PromoData;
 import com.alnative.ozon.service.DashboardService;
+import com.alnative.ozon.settings.ShopSettingsService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -53,6 +54,10 @@ public class OzonBot implements SpringLongPollingBot, LongPollingUpdateConsumer 
     private static final String CALLBACK_SEB = "seb:";
     /** Callback кнопки «Отмена» в списке товаров. */
     private static final String CALLBACK_CANCEL = "cancel";
+    /** Префикс callback-данных кнопок выбора налога: {@code tax:<pct>}. */
+    private static final String CALLBACK_TAX = "tax:";
+    /** Callback кнопки «Статистика по товарам». */
+    private static final String CALLBACK_STATS = "stats";
 
     private static final String HELP = """
             📊 Экономика магазина Ozon
@@ -69,6 +74,13 @@ public class OzonBot implements SpringLongPollingBot, LongPollingUpdateConsumer 
             Когда цены проставлены всем товарам, бот покажет дашборд с учётом себестоимости.
             (Отправьте «Отчет по начислениям», чтобы бот узнал товары.)
 
+            Налог:
+            /nalog — выбрать налоговую ставку магазина (1–12%)
+
+            Статистика по товарам:
+            /tovary — прибыль по каждому товару за 1 шт и за период, маржа, налог, реклама
+            (кнопка «📊 Статистика по товарам» под дашбордом)
+
             /reset — начать заново
             """;
 
@@ -81,6 +93,7 @@ public class OzonBot implements SpringLongPollingBot, LongPollingUpdateConsumer 
     private final PromoParser promoParser;
     private final DashboardService dashboardService;
     private final ProductCostService productCostService;
+    private final ShopSettingsService shopSettingsService;
     private final SessionStore sessionStore;
     private final DashboardFormatter formatter;
 
@@ -93,6 +106,7 @@ public class OzonBot implements SpringLongPollingBot, LongPollingUpdateConsumer 
                    PromoParser promoParser,
                    DashboardService dashboardService,
                    ProductCostService productCostService,
+                   ShopSettingsService shopSettingsService,
                    SessionStore sessionStore,
                    DashboardFormatter formatter) {
         this.props = props;
@@ -104,6 +118,7 @@ public class OzonBot implements SpringLongPollingBot, LongPollingUpdateConsumer 
         this.promoParser = promoParser;
         this.dashboardService = dashboardService;
         this.productCostService = productCostService;
+        this.shopSettingsService = shopSettingsService;
         this.sessionStore = sessionStore;
         this.formatter = formatter;
     }
@@ -170,9 +185,35 @@ public class OzonBot implements SpringLongPollingBot, LongPollingUpdateConsumer 
             send(chatId, "Сброшено. Отправьте файлы заново.");
         } else if (command.startsWith("/sebestoimost")) {
             handleSebestoimost(chatId, command);
+        } else if (command.startsWith("/nalog")) {
+            handleNalog(chatId);
+        } else if (command.startsWith("/tovary")) {
+            handleProductStats(chatId);
         } else {
             send(chatId, "Неизвестная команда. /help");
         }
+    }
+
+    /** Кнопки выбора налоговой ставки магазина (1–12%). */
+    private void handleNalog(Long chatId) {
+        int current = shopSettingsService.getTaxRatePct(chatId);
+        List<InlineKeyboardRow> rows = new ArrayList<>();
+        List<InlineKeyboardButton> row = new ArrayList<>();
+        for (int pct = 1; pct <= 12; pct++) {
+            row.add(InlineKeyboardButton.builder()
+                    .text(pct + "%")
+                    .callbackData(CALLBACK_TAX + pct)
+                    .build());
+            if (pct % 4 == 0) {
+                rows.add(new InlineKeyboardRow(row));
+                row = new ArrayList<>();
+            }
+        }
+        if (!row.isEmpty()) {
+            rows.add(new InlineKeyboardRow(row));
+        }
+        send(chatId, "💸 Налоговая ставка магазина\nТекущая: " + current + "%\nВыберите ставку:",
+                InlineKeyboardMarkup.builder().keyboard(rows).build());
     }
 
     private void handleDocument(Long chatId, Document document) {
@@ -228,10 +269,37 @@ public class OzonBot implements SpringLongPollingBot, LongPollingUpdateConsumer 
     private void buildDashboard(Long chatId, UserSession session) {
         try {
             DashboardMetrics metrics = dashboardService.build(chatId, session.getAccrual(), session.getPromo());
-            send(chatId, formatter.format(metrics));
+            send(chatId, formatter.format(metrics), productStatsKeyboard());
         } catch (RuntimeException e) {
             log.warn("Не удалось собрать дашборд для {}: {}", chatId, e.getMessage(), e);
             send(chatId, "⚠️ Ошибка расчёта дашборда: " + e.getMessage());
+        }
+    }
+
+    /** Кнопка под дашбордом — открыть статистику по товарам. */
+    private static InlineKeyboardMarkup productStatsKeyboard() {
+        return InlineKeyboardMarkup.builder()
+                .keyboard(List.of(new InlineKeyboardRow(InlineKeyboardButton.builder()
+                        .text("📊 Статистика по товарам")
+                        .callbackData(CALLBACK_STATS)
+                        .build())))
+                .build();
+    }
+
+    /** Статистика по товарам: прибыль за 1 шт и за период, маржа, налог, реклама. */
+    private void handleProductStats(Long chatId) {
+        UserSession session = sessionStore.get(chatId);
+        if (!session.ready()) {
+            send(chatId, "Сначала отправьте «Отчет по начислениям» и «Аналитика продвижения»,\n" +
+                    "чтобы посчитать статистику по товарам.");
+            return;
+        }
+        try {
+            String text = dashboardService.productStats(chatId, session.getAccrual(), session.getPromo());
+            sendLong(chatId, text);
+        } catch (RuntimeException e) {
+            log.error("Не удалось посчитать статистику по товарам для {}", chatId, e);
+            send(chatId, "⚠️ Ошибка расчёта статистики по товарам: " + e.getMessage());
         }
     }
 
@@ -261,37 +329,66 @@ public class OzonBot implements SpringLongPollingBot, LongPollingUpdateConsumer 
         showCostButtons(chatId, null);
     }
 
-    /** Нажатие кнопки в списке товаров: запоминаем выбранный SKU и просим ввести сумму. */
+    /** Нажатие inline-кнопки: себестоимость (seb:) или налоговая ставка (tax:). */
     private void handleCallbackQuery(CallbackQuery callback) {
         try {
             String data = callback.getData();
-            if (data == null || !data.startsWith(CALLBACK_SEB)) {
+            if (data == null) {
                 return;
             }
             Long chatId = callback.getMessage() == null ? null : callback.getMessage().getChatId();
             if (chatId == null || !isAllowed(chatId)) {
                 return;
             }
-            String sku = data.substring(CALLBACK_SEB.length());
-            UserSession session = sessionStore.get(chatId);
-            if (CALLBACK_CANCEL.equals(sku)) {
-                session.setPendingCostSku(null);
-                send(chatId, "Отменено. Чтобы задать себестоимость заново: /sebestoimost");
+            if (data.startsWith(CALLBACK_SEB)) {
+                handleSebCallback(chatId, data.substring(CALLBACK_SEB.length()));
+            } else if (data.startsWith(CALLBACK_TAX)) {
+                handleTaxCallback(chatId, data.substring(CALLBACK_TAX.length()));
+            } else if (CALLBACK_STATS.equals(data)) {
+                handleProductStats(chatId);
             } else {
-                ProductCost pc = productCostService.findByKey(chatId, sku);
-                if (pc == null) {
-                    session.setPendingCostSku(null);
-                    send(chatId, "Товар не найден. Отправьте «Отчет по начислениям», затем /sebestoimost");
-                } else {
-                    session.setPendingCostSku(pc.getSku());
-                    send(chatId, "Введите стоимость товара «" + pc.getName() + "» (SKU " + pc.getSku() + ") в рублях.\n" +
-                            "Например: 500");
-                }
+                return;
             }
             answerCallback(callback.getId());
         } catch (Exception e) {
             log.error("Ошибка обработки callback {}", callback.getData(), e);
         }
+    }
+
+    /** Кнопка товара: запоминаем выбранный SKU и просим ввести сумму. */
+    private void handleSebCallback(Long chatId, String sku) {
+        UserSession session = sessionStore.get(chatId);
+        if (CALLBACK_CANCEL.equals(sku)) {
+            session.setPendingCostSku(null);
+            send(chatId, "Отменено. Чтобы задать себестоимость заново: /sebestoimost");
+            return;
+        }
+        ProductCost pc = productCostService.findByKey(chatId, sku);
+        if (pc == null) {
+            session.setPendingCostSku(null);
+            send(chatId, "Товар не найден. Отправьте «Отчет по начислениям», затем /sebestoimost");
+        } else {
+            session.setPendingCostSku(pc.getSku());
+            send(chatId, "Введите стоимость товара «" + pc.getName() + "» (SKU " + pc.getSku() + ") в рублях.\n" +
+                    "Например: 500");
+        }
+    }
+
+    /** Кнопка налоговой ставки: сохраняем выбор и пересчитываем дашборд, если отчёты в сессии. */
+    private void handleTaxCallback(Long chatId, String value) {
+        int pct;
+        try {
+            pct = Integer.parseInt(value);
+        } catch (NumberFormatException e) {
+            return;
+        }
+        if (pct < 1 || pct > 12) {
+            send(chatId, "Ставка должна быть от 1% до 12%.");
+            return;
+        }
+        shopSettingsService.setTaxRatePct(chatId, pct);
+        send(chatId, "✅ Налоговая ставка магазина: " + pct + "%");
+        showDashboardIfReady(chatId, sessionStore.get(chatId));
     }
 
     /** Ввод суммы обычным текстом после выбора товара кнопкой. */
@@ -433,6 +530,29 @@ public class OzonBot implements SpringLongPollingBot, LongPollingUpdateConsumer 
 
     private void send(Long chatId, String text) {
         send(chatId, text, null);
+    }
+
+    /** Отправляет длинное сообщение, разбивая по строкам (лимит Telegram — 4096 символов). */
+    private void sendLong(Long chatId, String text) {
+        if (text.length() <= 4000) {
+            send(chatId, text);
+            return;
+        }
+        List<String> parts = new ArrayList<>();
+        StringBuilder cur = new StringBuilder();
+        for (String line : text.split("\n")) {
+            if (!cur.isEmpty() && cur.length() + line.length() + 1 > 4000) {
+                parts.add(cur.toString());
+                cur = new StringBuilder();
+            }
+            cur.append(line).append('\n');
+        }
+        if (!cur.isEmpty()) {
+            parts.add(cur.toString());
+        }
+        for (String p : parts) {
+            send(chatId, p);
+        }
     }
 
     private void send(Long chatId, String text, ReplyKeyboard replyMarkup) {

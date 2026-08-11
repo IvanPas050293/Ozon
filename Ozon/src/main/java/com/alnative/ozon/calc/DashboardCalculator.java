@@ -138,6 +138,7 @@ public class DashboardCalculator {
         double rentabelnost = safeDivide(chistayaPribyl, sebestoimost);
         double drr = safeDivide(promoExpense, vykupyRub);
 
+        int taxRatePct = Math.round((float) (taxRate * 100));
         DashboardMetrics m = new DashboardMetrics(
                 min == null ? "" : min.format(FMT),
                 max == null ? "" : max.format(FMT),
@@ -145,7 +146,7 @@ public class DashboardCalculator {
                 procentVycupa, srednyayaCena,
                 vykupyRub, vozvratyRub, vyruchka, sebestoimost, komissiya, ekvayring,
                 logistika, drugieUslugi, vsegoUderzhaniy, oplataNaRs,
-                nalogovayaBaza, nalog, chistayaPribyl, marzha, rentabelnost,
+                nalogovayaBaza, nalog, taxRatePct, chistayaPribyl, marzha, rentabelnost,
                 promoExpense, drr,
                 accruals.size());
         log.debug("Дашборд: выручка {}, ЧП {}, ДРР {}", vyruchka, chistayaPribyl, drr);

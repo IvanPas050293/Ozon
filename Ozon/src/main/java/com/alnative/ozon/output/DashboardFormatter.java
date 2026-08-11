@@ -37,7 +37,7 @@ public class DashboardFormatter {
         sb.append("▫️ Другие услуги: ").append(rub(m.drugieUslugi())).append("\n");
         sb.append("▫️ Всего удержаний OZON: ").append(rub(m.vsegoUderzhaniy())).append("\n");
         sb.append("▫️ Оплата на р/с: ").append(rub(m.oplataNaRs())).append("\n");
-        sb.append("▫️ Налог: ").append(rub(m.nalog())).append("\n");
+        sb.append("▫️ Налог (").append(m.taxRatePct()).append("%): ").append(rub(m.nalog())).append("\n");
         sb.append("▫️ Чистая прибыль: ").append(rub(m.chistayaPribyl())).append("\n");
         sb.append("▫️ Маржинальность: ").append(pct(m.marzha()))
                 .append(" · Рентабельность: ").append(pct(m.rentabelnost())).append("\n\n");

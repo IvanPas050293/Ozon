@@ -29,6 +29,7 @@ public record DashboardMetrics(
         double oplataNaRs,       // оплата на р/с, ₽
         double nalogovayaBaza,   // налоговая база, ₽
         double nalog,            // налог, ₽
+        int taxRatePct,          // налоговая ставка, % (выбор пользователя)
         double chistayaPribyl,   // чистая прибыль, ₽
         double marzha,           // маржинальность, доли (ЧП/выручка)
         double rentabelnost,     // рентабельность, доли (ЧП/себестоимость)

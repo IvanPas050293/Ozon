@@ -81,6 +81,7 @@ class DashboardCalculatorTest {
         assertEquals(145256.74, m.oplataNaRs(), MONEY);
         assertEquals(259972.31, m.nalogovayaBaza(), MONEY);
         assertEquals(15598.34, m.nalog(), 0.01);
+        assertEquals(6, m.taxRatePct());
         assertEquals(30593.40, m.chistayaPribyl(), 0.02);        // 145256.74 − 99065 − 15598.34
         assertEquals(0.0605, m.marzha(), RATIO);
         assertEquals(0.3088, m.rentabelnost(), RATIO);

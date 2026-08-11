@@ -9,6 +9,8 @@ import com.alnative.ozon.parser.NagruzheniyaParser;
 import com.alnative.ozon.parser.PromoParser;
 import com.alnative.ozon.parser.model.NagruzheniyaReport;
 import com.alnative.ozon.parser.model.PromoData;
+import com.alnative.ozon.settings.ShopSettingsRepository;
+import com.alnative.ozon.settings.ShopSettingsService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -60,9 +62,19 @@ class DashboardServiceTest {
         when(repository.findByOwnerChatIdAndSkuIgnoreCase(any(), any())).thenReturn(Optional.empty());
         when(repository.save(any(ProductCost.class))).thenAnswer(inv -> inv.getArgument(0));
 
-        DashboardMetrics m = new DashboardService(new ProductCostService(repository), PROPS)
+        ShopSettingsRepository settingsRepo = mock(ShopSettingsRepository.class);
+        when(settingsRepo.findById(any())).thenReturn(Optional.empty());
+        ShopSettingsService settingsService = new ShopSettingsService(settingsRepo, PROPS);
+
+        DashboardMetrics m = new DashboardService(new ProductCostService(repository), settingsService, PROPS)
                 .build(111L, report, promo);
         assertNotNull(m);
+
+        // Статистика по товарам строится из тех же данных в памяти.
+        String stats = new DashboardService(new ProductCostService(repository), settingsService, PROPS)
+                .productStats(111L, report, promo);
+        assertNotNull(stats);
+        assertTrue(stats.contains("📊 Статистика по товарам"));
     }
 
     private static Path sample(String name) {

@@ -129,6 +129,18 @@ public class ProductCostService implements CostProvider {
                 .orElse(0.0);
     }
 
+    /** Задана ли себестоимость товара магазина (в отличие от 0, когда она просто не введена). */
+    @Transactional(readOnly = true)
+    public boolean hasCost(Long ownerChatId, String sku) {
+        if (sku == null || sku.isBlank()) {
+            return false;
+        }
+        return repository.findByOwnerChatIdAndSkuIgnoreCase(ownerChatId, sku)
+                .map(ProductCost::getCost)
+                .map(c -> c != null)
+                .orElse(false);
+    }
+
     private static boolean isChanged(String oldVal, String newVal) {
         return oldVal == null || oldVal.isBlank() ? newVal != null && !newVal.isBlank()
                 : !oldVal.equals(newVal);
