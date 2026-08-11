@@ -5,6 +5,9 @@ services:
     container_name: ozon-bot
     # Автозапуск после перезагрузки сервера; рестарт при падениях
     restart: unless-stopped
+    # Используем сеть хоста: на ряде российских VPS IPv4 до Telegram
+    # заблокирован, а IPv6 работает только на хосте (в контейнере его нет).
+    network_mode: host
 
     environment:
       BOT_USERNAME: ${BOT_USERNAME:-ozon_analytics_bot}
