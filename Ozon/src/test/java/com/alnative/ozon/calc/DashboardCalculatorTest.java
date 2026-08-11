@@ -53,8 +53,8 @@ class DashboardCalculatorTest {
         PromoData promo = new PromoParser().parse(sample("Аналитика продвижения_10.08.2026.xlsx"));
 
         List<Accrual> accruals = report.accruals();
-        DashboardCalculator calc = new DashboardCalculator(COSTS::get, 1, 0.06);
-        DashboardMetrics m = calc.calculate(accruals, promo.totalExpense());
+        DashboardCalculator calc = new DashboardCalculator((owner, sku) -> COSTS.getOrDefault(sku, 0.0), 1, 0.06);
+        DashboardMetrics m = calc.calculate(111L, accruals, promo.totalExpense());
 
         // Период
         assertEquals("01.08.2026", m.periodStart());

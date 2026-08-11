@@ -1,62 +1,56 @@
 package com.alnative.ozon.bot;
 
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
+import com.alnative.ozon.parser.model.NagruzheniyaReport;
+import com.alnative.ozon.parser.model.PromoData;
 
 /**
- * Сессия пользователя: загруженные временные файлы отчётов.
+ * Сессия пользователя: распарсенные данные отчётов, хранятся в памяти.
+ * <p>
+ * Файлы на диске между сообщениями не держим: временная папка ОС (в которую скачиваются
+ * файлы) может быть почищена системой в любой момент, поэтому после разбора файл удаляется
+ * сразу, а в сессии остаются готовые данные для расчёта дашборда.
  */
 public class UserSession {
 
-    private Path accrualFile;
-    private Path promoFile;
+    private NagruzheniyaReport accrual;
+    private PromoData promo;
 
-    public Path getAccrualFile() {
-        return accrualFile;
+    /** SKU товара, для которого ждём ввод себестоимости (после нажатия кнопки в /sebestoimost). */
+    private String pendingCostSku;
+
+    public NagruzheniyaReport getAccrual() {
+        return accrual;
     }
 
-    public void setAccrualFile(Path accrualFile) {
-        cleanup(accrualFile);
-        this.accrualFile = accrualFile;
+    public void setAccrual(NagruzheniyaReport accrual) {
+        this.accrual = accrual;
     }
 
-    public Path getPromoFile() {
-        return promoFile;
+    public PromoData getPromo() {
+        return promo;
     }
 
-    public void setPromoFile(Path promoFile) {
-        cleanup(promoFile);
-        this.promoFile = promoFile;
+    public void setPromo(PromoData promo) {
+        this.promo = promo;
     }
 
-    /** Оба файла загружены — можно считать дашборд. */
+    public String getPendingCostSku() {
+        return pendingCostSku;
+    }
+
+    public void setPendingCostSku(String pendingCostSku) {
+        this.pendingCostSku = pendingCostSku;
+    }
+
+    /** Оба отчёта получены — можно считать дашборд. */
     public boolean ready() {
-        return accrualFile != null && promoFile != null;
+        return accrual != null && promo != null;
     }
 
-    /** Удаляет временные файлы сессии. */
+    /** Очищает сессию. */
     public void cleanup() {
-        deleteQuietly(accrualFile);
-        deleteQuietly(promoFile);
-        accrualFile = null;
-        promoFile = null;
-    }
-
-    private static void cleanup(Path oldFile) {
-        if (oldFile != null) {
-            deleteQuietly(oldFile);
-        }
-    }
-
-    private static void deleteQuietly(Path path) {
-        if (path == null) {
-            return;
-        }
-        try {
-            Files.deleteIfExists(path);
-        } catch (IOException ignored) {
-            // не критично
-        }
+        accrual = null;
+        promo = null;
+        pendingCostSku = null;
     }
 }

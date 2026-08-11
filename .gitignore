@@ -30,6 +30,9 @@ replay_pid*
 # Локальная H2-база бота
 data/
 
+# Локальный конфиг с токеном бота (не коммитить)
+application-local.yml
+
 ### IntelliJ IDEA ###
 .idea/modules.xml
 .idea/jarRepositories.xml

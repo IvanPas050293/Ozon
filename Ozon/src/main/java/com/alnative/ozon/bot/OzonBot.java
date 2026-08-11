@@ -8,24 +8,34 @@ import com.alnative.ozon.config.BotProperties;
 import com.alnative.ozon.output.DashboardFormatter;
 import com.alnative.ozon.parser.ExcelDocumentClassifier;
 import com.alnative.ozon.parser.NagruzheniyaParser;
+import com.alnative.ozon.parser.PromoParser;
 import com.alnative.ozon.parser.model.ExcelRole;
 import com.alnative.ozon.parser.model.NagruzheniyaReport;
+import com.alnative.ozon.parser.model.PromoData;
 import com.alnative.ozon.service.DashboardService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.telegram.telegrambots.longpolling.interfaces.LongPollingUpdateConsumer;
 import org.telegram.telegrambots.longpolling.starter.SpringLongPollingBot;
+import org.telegram.telegrambots.meta.api.methods.AnswerCallbackQuery;
 import org.telegram.telegrambots.meta.api.methods.GetFile;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
+import org.telegram.telegrambots.meta.api.objects.CallbackQuery;
 import org.telegram.telegrambots.meta.api.objects.Document;
 import org.telegram.telegrambots.meta.api.objects.Update;
 import org.telegram.telegrambots.meta.api.objects.message.Message;
+import org.telegram.telegrambots.meta.api.objects.replykeyboard.ReplyKeyboard;
+import org.telegram.telegrambots.meta.api.objects.replykeyboard.InlineKeyboardMarkup;
+import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardButton;
+import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardRow;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 import org.telegram.telegrambots.meta.generics.TelegramClient;
 
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
@@ -39,6 +49,11 @@ public class OzonBot implements SpringLongPollingBot, LongPollingUpdateConsumer 
 
     private static final Logger log = LoggerFactory.getLogger(OzonBot.class);
 
+    /** Префикс callback-данных кнопок «задать себестоимость»: {@code seb:<sku>}. */
+    private static final String CALLBACK_SEB = "seb:";
+    /** Callback кнопки «Отмена» в списке товаров. */
+    private static final String CALLBACK_CANCEL = "cancel";
+
     private static final String HELP = """
             📊 Экономика магазина Ozon
 
@@ -48,17 +63,22 @@ public class OzonBot implements SpringLongPollingBot, LongPollingUpdateConsumer 
 
             Бот распарсит их и покажет сводку дашборда: выручку, комиссии, логистику, прибыль, ДРР.
 
-            Команды:
-            /sebestoimost — список товаров и себестоимости
-            /sebestoimost SKU-или-Артикул стоимость — задать себестоимость (название подставится из отчёта)
+            Себестоимость:
+            /sebestoimost — задать себестоимость товаров кнопками
+            Нажмите товар → введите цену → кнопки появятся снова.
+            Когда цены проставлены всем товарам, бот покажет дашборд с учётом себестоимости.
+            (Отправьте «Отчет по начислениям», чтобы бот узнал товары.)
+
             /reset — начать заново
             """;
 
     private final BotProperties props;
     private final AppProperties appProps;
     private final TelegramClient client;
+    private final TelegramFileDownloader downloader;
     private final ExcelDocumentClassifier classifier;
     private final NagruzheniyaParser nagruzheniyaParser;
+    private final PromoParser promoParser;
     private final DashboardService dashboardService;
     private final ProductCostService productCostService;
     private final SessionStore sessionStore;
@@ -67,8 +87,10 @@ public class OzonBot implements SpringLongPollingBot, LongPollingUpdateConsumer 
     public OzonBot(BotProperties props,
                    AppProperties appProps,
                    TelegramClient client,
+                   TelegramFileDownloader downloader,
                    ExcelDocumentClassifier classifier,
                    NagruzheniyaParser nagruzheniyaParser,
+                   PromoParser promoParser,
                    DashboardService dashboardService,
                    ProductCostService productCostService,
                    SessionStore sessionStore,
@@ -76,8 +98,10 @@ public class OzonBot implements SpringLongPollingBot, LongPollingUpdateConsumer 
         this.props = props;
         this.appProps = appProps;
         this.client = client;
+        this.downloader = downloader;
         this.classifier = classifier;
         this.nagruzheniyaParser = nagruzheniyaParser;
+        this.promoParser = promoParser;
         this.dashboardService = dashboardService;
         this.productCostService = productCostService;
         this.sessionStore = sessionStore;
@@ -97,7 +121,9 @@ public class OzonBot implements SpringLongPollingBot, LongPollingUpdateConsumer 
     @Override
     public void consume(List<Update> updates) {
         for (Update update : updates) {
-            if (update.hasMessage()) {
+            if (update.hasCallbackQuery()) {
+                handleCallbackQuery(update.getCallbackQuery());
+            } else if (update.hasMessage()) {
                 handleMessage(update.getMessage());
             }
         }
@@ -113,19 +139,30 @@ public class OzonBot implements SpringLongPollingBot, LongPollingUpdateConsumer 
         try {
             if (message.hasDocument()) {
                 handleDocument(chatId, message.getDocument());
-            } else if (message.getText() != null && message.getText().startsWith("/")) {
-                handleCommand(chatId, message.getText().trim());
-            } else {
-                send(chatId, "Отправьте два файла xlsx: «Отчет по начислениям» и «Аналитика продвижения».\n" +
-                        "Подробнее — /help");
+                return;
             }
+            String text = message.getText();
+            if (text != null && text.startsWith("/")) {
+                handleCommand(chatId, text.trim());
+                return;
+            }
+            UserSession session = sessionStore.get(chatId);
+            if (session.getPendingCostSku() != null) {
+                // Ждём число — себестоимость для выбранного кнопкой товара.
+                handleCostInput(chatId, text == null ? "" : text.trim());
+                return;
+            }
+            send(chatId, "Отправьте два файла xlsx: «Отчет по начислениям» и «Аналитика продвижения».\n" +
+                    "Подробнее — /help");
         } catch (Exception e) {
             log.error("Ошибка обработки сообщения от {}", chatId, e);
             send(chatId, "⚠️ Произошла ошибка: " + e.getMessage());
         }
     }
 
-    private void handleCommand(Long chatId, String command) throws IOException {
+    private void handleCommand(Long chatId, String command) {
+        // Команда прерывает ожидание ввода себестоимости.
+        sessionStore.get(chatId).setPendingCostSku(null);
         if (command.startsWith("/start") || command.startsWith("/help")) {
             send(chatId, HELP);
         } else if (command.startsWith("/reset")) {
@@ -138,92 +175,272 @@ public class OzonBot implements SpringLongPollingBot, LongPollingUpdateConsumer 
         }
     }
 
-    private void handleDocument(Long chatId, Document document) throws IOException, TelegramApiException {
+    private void handleDocument(Long chatId, Document document) {
         String fileName = document.getFileName() == null ? "" : document.getFileName();
         if (!fileName.toLowerCase(Locale.ROOT).endsWith(".xlsx")) {
             send(chatId, "Принимаю только файлы .xlsx");
             return;
         }
-        Path file = download(document.getFileId());
-        ExcelRole role = classifier.classify(file);
-        UserSession session = sessionStore.get(chatId);
-        switch (role) {
-            case ACCRUAL -> {
-                NagruzheniyaReport report = nagruzheniyaParser.parse(file);
-                session.setAccrualFile(file);
-                send(chatId, "✅ Принял: Отчет по начислениям (" + report.accruals().size() + " строк, "
-                        + report.periodStart() + " — " + report.periodEnd() + ").");
+        Path file = null;
+        try {
+            file = download(document);
+            downloader.ensureXlsx(file);
+            ExcelRole role = classifier.classify(file);
+            UserSession session = sessionStore.get(chatId);
+            switch (role) {
+                case ACCRUAL -> {
+                    NagruzheniyaReport report = nagruzheniyaParser.parse(file);
+                    session.setAccrual(report);
+                    send(chatId, "✅ Принял: Отчет по начислениям (" + report.accruals().size() + " строк, "
+                            + report.periodStart() + " — " + report.periodEnd() + ").");
+                }
+                case PROMO -> {
+                    PromoData promo = promoParser.parse(file);
+                    session.setPromo(promo);
+                    send(chatId, "✅ Принял: Аналитика продвижения.");
+                }
+                default -> {
+                    session.cleanup();
+                    send(chatId, "❌ Не распознал файл. Нужны: «Отчет по начислениям» и «Аналитика продвижения».");
+                }
             }
-            case PROMO -> {
-                session.setPromoFile(file);
-                send(chatId, "✅ Принял: Аналитика продвижения.");
+            if (session.ready()) {
+                buildDashboard(chatId, session);
             }
-            default -> {
-                session.cleanup();
-                send(chatId, "❌ Не распознал файл. Нужны: «Отчет по начислениям» и «Аналитика продвижения».");
-                return;
+        } catch (IOException | TelegramApiException e) {
+            Path kept = preserveFailedFile(file, fileName);
+            log.warn("Не удалось обработать файл {} от {}: {}", fileName, chatId, e.getMessage(), e);
+            if (kept != null) {
+                log.warn("Неудачный файл сохранён для диагностики: {}", kept);
             }
+            send(chatId, "❌ Не удалось прочитать файл: " + e.getMessage()
+                    + "\nПроверьте, что файл выгружен из ЛК Ozon и не пересохранён другой программой, затем отправьте ещё раз.");
+        } finally {
+            deleteQuietly(file);
         }
-        if (session.ready()) {
-            try {
-                DashboardMetrics metrics = dashboardService.build(session.getAccrualFile(), session.getPromoFile());
-                send(chatId, formatter.format(metrics));
-            } finally {
-                session.cleanup();
-            }
+    }
+
+    /**
+     * Собирает дашборд из распарсенных данных сессии.
+     * Сессию не очищаем: отчёты остаются в памяти, чтобы после ввода себестоимости
+     * дашборд можно было показать вновь с учётом новых цен (сброс — /reset или новые файлы).
+     */
+    private void buildDashboard(Long chatId, UserSession session) {
+        try {
+            DashboardMetrics metrics = dashboardService.build(chatId, session.getAccrual(), session.getPromo());
+            send(chatId, formatter.format(metrics));
+        } catch (RuntimeException e) {
+            log.warn("Не удалось собрать дашборд для {}: {}", chatId, e.getMessage(), e);
+            send(chatId, "⚠️ Ошибка расчёта дашборда: " + e.getMessage());
         }
     }
 
     private void handleSebestoimost(Long chatId, String command) {
         String[] parts = command.split("\\s+");
         if (parts.length >= 3) {
-            // /sebestoimost <sku|артикул> <стоимость>
+            // /sebestoimost <sku|артикул> <стоимость> — быстрый ввод без кнопок
             String key = parts[1];
             double cost = parseCost(parts[2]);
             if (cost < 0) {
                 send(chatId, "Себестоимость не может быть отрицательной.");
                 return;
             }
-            ProductCost pc = productCostService.setCost(key, cost);
+            ProductCost pc = productCostService.setCost(chatId, key, cost);
             if (pc == null) {
                 send(chatId, "Товар «" + key + "» не найден. Сначала отправьте «Отчет по начислениям» — бот узнает список товаров.\n" +
                         "Посмотреть список: /sebestoimost");
             } else {
                 send(chatId, "✅ Себестоимость «" + pc.getName() + "» (" + pc.getSku() + ") = "
                         + formatMoney(cost) + " ₽");
+                afterCostSet(chatId);
             }
-        } else {
-            // список
-            StringBuilder sb = new StringBuilder("📦 Себестоимость товаров\n");
-            List<ProductCost> items = productCostService.list();
-            if (items.isEmpty()) {
-                sb.append("Список пуст. Отправьте «Отчет по начислениям», чтобы бот узнал товары,\n" +
-                        "затем задайте себестоимость: /sebestoimost <SKU> <стоимость>");
+            return;
+        }
+
+        // Список товаров кнопками: нажатие → бот спрашивает сумму.
+        showCostButtons(chatId, null);
+    }
+
+    /** Нажатие кнопки в списке товаров: запоминаем выбранный SKU и просим ввести сумму. */
+    private void handleCallbackQuery(CallbackQuery callback) {
+        try {
+            String data = callback.getData();
+            if (data == null || !data.startsWith(CALLBACK_SEB)) {
+                return;
+            }
+            Long chatId = callback.getMessage() == null ? null : callback.getMessage().getChatId();
+            if (chatId == null || !isAllowed(chatId)) {
+                return;
+            }
+            String sku = data.substring(CALLBACK_SEB.length());
+            UserSession session = sessionStore.get(chatId);
+            if (CALLBACK_CANCEL.equals(sku)) {
+                session.setPendingCostSku(null);
+                send(chatId, "Отменено. Чтобы задать себестоимость заново: /sebestoimost");
             } else {
-                sb.append("Задать: /sebestoimost <SKU|Артикул> <стоимость>\n\n");
-                int i = 1;
-                for (ProductCost pc : items) {
-                    sb.append(i++).append(". ").append(pc.getName() == null ? pc.getSku() : pc.getName())
-                            .append("\n   SKU ").append(pc.getSku())
-                            .append(" · ").append(pc.getCost() == null ? "не задано" : formatMoney(pc.getCost()) + " ₽")
-                            .append("\n");
+                ProductCost pc = productCostService.findByKey(chatId, sku);
+                if (pc == null) {
+                    session.setPendingCostSku(null);
+                    send(chatId, "Товар не найден. Отправьте «Отчет по начислениям», затем /sebestoimost");
+                } else {
+                    session.setPendingCostSku(pc.getSku());
+                    send(chatId, "Введите стоимость товара «" + pc.getName() + "» (SKU " + pc.getSku() + ") в рублях.\n" +
+                            "Например: 500");
                 }
             }
-            send(chatId, sb.toString());
+            answerCallback(callback.getId());
+        } catch (Exception e) {
+            log.error("Ошибка обработки callback {}", callback.getData(), e);
+        }
+    }
+
+    /** Ввод суммы обычным текстом после выбора товара кнопкой. */
+    private void handleCostInput(Long chatId, String text) {
+        UserSession session = sessionStore.get(chatId);
+        String sku = session.getPendingCostSku();
+        double cost = parseCost(text);
+        if (cost < 0) {
+            send(chatId, "Введите стоимость числом, например: 500");
+            return;
+        }
+        session.setPendingCostSku(null);
+        ProductCost pc = productCostService.setCost(chatId, sku, cost);
+        if (pc == null) {
+            send(chatId, "Товар «" + sku + "» не найден. Сначала отправьте «Отчет по начислениям».");
+            return;
+        }
+        send(chatId, "✅ Себестоимость «" + pc.getName() + "» (" + pc.getSku() + ") = "
+                + formatMoney(cost) + " ₽");
+        afterCostSet(chatId);
+    }
+
+    /** Снимает «крутилку» с нажатой inline-кнопки. */
+    private void answerCallback(String callbackQueryId) {
+        try {
+            client.execute(AnswerCallbackQuery.builder().callbackQueryId(callbackQueryId).build());
+        } catch (TelegramApiException e) {
+            log.debug("Не удалось ответить на callback {}", callbackQueryId, e);
+        }
+    }
+
+    /** Текст кнопки товара: проставленные помечаются ✓ с ценой, остальные — с SKU. */
+    private static String buttonLabel(ProductCost pc) {
+        String name = pc.getName() == null || pc.getName().isBlank() ? pc.getSku() : pc.getName();
+        if (name.length() > 24) {
+            name = name.substring(0, 23) + "…";
+        }
+        if (pc.getCost() != null) {
+            return "✅ " + name + " · " + formatMoney(pc.getCost()) + " ₽";
+        }
+        return name + " · SKU " + pc.getSku();
+    }
+
+    /** Кнопки товаров магазина. Проставленные видны с ценой, остальные — ждут ввода. */
+    private void showCostButtons(Long chatId, String header) {
+        List<ProductCost> items = productCostService.list(chatId);
+        if (items.isEmpty()) {
+            send(chatId, "Список товаров пуст. Отправьте «Отчет по начислениям», чтобы бот узнал товары,\n" +
+                    "затем откройте список: /sebestoimost");
+            return;
+        }
+        List<InlineKeyboardRow> rows = new ArrayList<>();
+        for (ProductCost pc : items) {
+            rows.add(new InlineKeyboardRow(InlineKeyboardButton.builder()
+                    .text(buttonLabel(pc))
+                    .callbackData(CALLBACK_SEB + pc.getSku())
+                    .build()));
+        }
+        rows.add(new InlineKeyboardRow(InlineKeyboardButton.builder()
+                .text("❌ Отмена")
+                .callbackData(CALLBACK_SEB + CALLBACK_CANCEL)
+                .build()));
+        String text = (header == null ? "📦 Себестоимость товаров" : header)
+                + "\nНажмите товар → введите цену:";
+        send(chatId, text, InlineKeyboardMarkup.builder().keyboard(rows).build());
+    }
+
+    /**
+     * После успешного ввода цены: если остались товары без цены — снова показываем кнопки,
+     * иначе проставляем финиш и собираем дашборд с учётом себестоимости.
+     */
+    private void afterCostSet(Long chatId) {
+        List<ProductCost> items = productCostService.list(chatId);
+        if (items.isEmpty()) {
+            return;
+        }
+        long remaining = items.stream().filter(pc -> pc.getCost() == null).count();
+        if (remaining == 0) {
+            send(chatId, "🎉 Все себестоимости проставлены.");
+            showDashboardIfReady(chatId, sessionStore.get(chatId));
+        } else {
+            showCostButtons(chatId, "Осталось проставить: " + remaining);
+        }
+    }
+
+    /** Если оба отчёта в сессии — собираем дашборд (с учётом новых цен), иначе просим отправить файлы. */
+    private void showDashboardIfReady(Long chatId, UserSession session) {
+        if (session.ready()) {
+            buildDashboard(chatId, session);
+        } else {
+            send(chatId, "Чтобы посчитать дашборд с учётом себестоимости, отправьте файлы:\n" +
+                    "«Отчет по начислениям» и «Аналитика продвижения».");
         }
     }
 
     // ------------------------------------------------------------------ utils
 
-    private Path download(String fileId) throws TelegramApiException {
-        GetFile request = GetFile.builder().fileId(fileId).build();
+    private Path download(Document document) throws TelegramApiException, IOException {
+        GetFile request = GetFile.builder().fileId(document.getFileId()).build();
         org.telegram.telegrambots.meta.api.objects.File f = client.execute(request);
-        return client.downloadFile(f).toPath();
+        return downloader.download(f);
+    }
+
+    private static void deleteQuietly(Path path) {
+        if (path == null) {
+            return;
+        }
+        try {
+            Files.deleteIfExists(path);
+        } catch (IOException ignored) {
+            // не критично
+        }
+    }
+
+    /** Сохраняет неудачно обработанный файл в data/failed/ для диагностики. */
+    private static Path preserveFailedFile(Path file, String originalName) {
+        if (file == null) {
+            return null;
+        }
+        try {
+            Path dir = Path.of("data", "failed");
+            Files.createDirectories(dir);
+            String safe = originalName == null || originalName.isBlank()
+                    ? "unknown.bin"
+                    : originalName.replaceAll("[^A-Za-z0-9._\\- ]", "_");
+            Path target = dir.resolve(safe);
+            int n = 1;
+            while (Files.exists(target)) {
+                target = dir.resolve(n + "_" + safe);
+                n++;
+            }
+            Files.copy(file, target);
+            return target;
+        } catch (IOException ex) {
+            log.warn("Не удалось сохранить файл для диагностики: {}", ex.getMessage());
+            return null;
+        }
     }
 
     private void send(Long chatId, String text) {
+        send(chatId, text, null);
+    }
+
+    private void send(Long chatId, String text, ReplyKeyboard replyMarkup) {
         try {
-            client.execute(SendMessage.builder().chatId(chatId).text(text).build());
+            SendMessage message = replyMarkup == null
+                    ? SendMessage.builder().chatId(chatId).text(text).build()
+                    : SendMessage.builder().chatId(chatId).text(text).replyMarkup(replyMarkup).build();
+            client.execute(message);
         } catch (TelegramApiException e) {
             log.error("Не удалось отправить сообщение в чат {}", chatId, e);
         }

@@ -42,10 +42,11 @@ public class DashboardCalculator {
     /**
      * Считает метрики за весь период (мин/макс даты начислений).
      *
+     * @param ownerChatId  chat_id магазина (для себестоимостей его каталога)
      * @param accruals     строки начислений
      * @param promoExpense суммарный расход на продвижение (для ДРР)
      */
-    public DashboardMetrics calculate(List<Accrual> accruals, double promoExpense) {
+    public DashboardMetrics calculate(Long ownerChatId, List<Accrual> accruals, double promoExpense) {
         Set<String> returnIds = collectReturnIds(accruals);
 
         long vykupySht = 0;
@@ -129,7 +130,7 @@ public class DashboardCalculator {
         double drugieUslugi = (sumExpense + sumUnclassified) - komissiya - logistika;
         double vsegoUderzhaniy = sumExpense + sumUnclassified;
         double oplataNaRs = vyruchka + vsegoUderzhaniy;
-        double sebestoimost = costProvider == null ? 0 : computeSebestoimost(netUnits);
+        double sebestoimost = costProvider == null ? 0 : computeSebestoimost(ownerChatId, netUnits);
         double nalogovayaBaza = computeTaxBase(taxSystem, vyruchka, oplataNaRs, sebestoimost, usnDohodyBase);
         double nalog = nalogovayaBaza * taxRate;
         double chistayaPribyl = oplataNaRs - sebestoimost - nalog;
@@ -169,10 +170,10 @@ public class DashboardCalculator {
         netUnits.merge(sku, qty, Double::sum);
     }
 
-    private double computeSebestoimost(Map<String, Double> netUnits) {
+    private double computeSebestoimost(Long ownerChatId, Map<String, Double> netUnits) {
         double sum = 0;
         for (Map.Entry<String, Double> e : netUnits.entrySet()) {
-            sum += e.getValue() * costProvider.costOf(e.getKey());
+            sum += e.getValue() * costProvider.costOf(ownerChatId, e.getKey());
         }
         return sum;
     }

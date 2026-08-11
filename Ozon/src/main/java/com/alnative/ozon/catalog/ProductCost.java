@@ -14,6 +14,10 @@ import java.time.LocalDateTime;
 @Table(name = "product_cost")
 public class ProductCost {
 
+    /** Владелец каталога — chat_id магазина (чтобы разные магазины не смешивали данные). */
+    @Column(name = "owner_chat_id")
+    private Long ownerChatId;
+
     @Id
     @Column(name = "sku", length = 32)
     private String sku;
@@ -37,6 +41,14 @@ public class ProductCost {
         this.sku = sku;
         this.artikul = artikul;
         this.name = name;
+    }
+
+    public Long getOwnerChatId() {
+        return ownerChatId;
+    }
+
+    public void setOwnerChatId(Long ownerChatId) {
+        this.ownerChatId = ownerChatId;
     }
 
     public String getSku() {

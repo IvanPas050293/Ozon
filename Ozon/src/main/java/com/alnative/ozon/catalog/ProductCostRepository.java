@@ -7,9 +7,9 @@ import java.util.Optional;
 
 public interface ProductCostRepository extends JpaRepository<ProductCost, String> {
 
-    Optional<ProductCost> findBySkuIgnoreCase(String sku);
+    Optional<ProductCost> findByOwnerChatIdAndSkuIgnoreCase(Long ownerChatId, String sku);
 
-    Optional<ProductCost> findByArtikulIgnoreCase(String artikul);
+    Optional<ProductCost> findByOwnerChatIdAndArtikulIgnoreCase(Long ownerChatId, String artikul);
 
-    List<ProductCost> findAllByOrderBySkuAsc();
+    List<ProductCost> findAllByOwnerChatIdOrderBySkuAsc(Long ownerChatId);
 }

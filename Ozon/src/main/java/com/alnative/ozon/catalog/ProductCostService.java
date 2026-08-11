@@ -16,6 +16,9 @@ import java.util.Optional;
 /**
  * Каталог себестоимости: автоматически пополняется названиями из отчёта начислений,
  * себестоимость вводит пользователь командами бота.
+ * <p>
+ * Каталог разделён по владельцу (chat_id магазина): разные магазины в одном боте
+ * не видят и не перезаписывают данные друг друга.
  */
 @Service
 public class ProductCostService implements CostProvider {
@@ -29,17 +32,18 @@ public class ProductCostService implements CostProvider {
     }
 
     /**
-     * Пополняет каталог из отчёта начислений: SKU → название и артикул.
+     * Пополняет каталог магазина из отчёта начислений: SKU → название и артикул.
      * Существующую себестоимость не трогает.
      */
     @Transactional
-    public void upsertFromReport(List<Accrual> accruals) {
+    public void upsertFromReport(Long ownerChatId, List<Accrual> accruals) {
         Map<String, ProductCost> bySku = new LinkedHashMap<>();
         for (Accrual a : accruals) {
             if (a.sku() == null || a.sku().isBlank()) {
                 continue;
             }
             ProductCost pc = bySku.computeIfAbsent(a.sku(), k -> new ProductCost(k, a.artikul(), a.name()));
+            pc.setOwnerChatId(ownerChatId);
             if (pc.getArtikul() == null || pc.getArtikul().isBlank()) {
                 pc.setArtikul(a.artikul());
             }
@@ -50,7 +54,7 @@ public class ProductCostService implements CostProvider {
         int created = 0;
         int updated = 0;
         for (ProductCost pc : bySku.values()) {
-            Optional<ProductCost> existing = repository.findBySkuIgnoreCase(pc.getSku());
+            Optional<ProductCost> existing = repository.findByOwnerChatIdAndSkuIgnoreCase(ownerChatId, pc.getSku());
             if (existing.isPresent()) {
                 boolean changed = false;
                 ProductCost e = existing.get();
@@ -73,20 +77,30 @@ public class ProductCostService implements CostProvider {
                 created++;
             }
         }
-        log.info("Каталог: создано {}, обновлено {}", created, updated);
+        log.info("Каталог (чат {}): создано {}, обновлено {}", ownerChatId, created, updated);
     }
 
     /**
-     * Задаёт себестоимость товара по SKU или артикулу.
+     * Товар магазина по SKU или артикулу.
+     *
+     * @return товар или {@code null}, если не найден
+     */
+    @Transactional(readOnly = true)
+    public ProductCost findByKey(Long ownerChatId, String skuOrArtikul) {
+        String key = skuOrArtikul == null ? "" : skuOrArtikul.trim();
+        return repository.findByOwnerChatIdAndSkuIgnoreCase(ownerChatId, key)
+                .or(() -> repository.findByOwnerChatIdAndArtikulIgnoreCase(ownerChatId, key))
+                .orElse(null);
+    }
+
+    /**
+     * Задаёт себестоимость товара магазина по SKU или артикулу.
      *
      * @return обновлённый товар или {@code null}, если товар не найден
      */
     @Transactional
-    public ProductCost setCost(String skuOrArtikul, double cost) {
-        String key = skuOrArtikul == null ? "" : skuOrArtikul.trim();
-        ProductCost pc = repository.findBySkuIgnoreCase(key)
-                .or(() -> repository.findByArtikulIgnoreCase(key))
-                .orElse(null);
+    public ProductCost setCost(Long ownerChatId, String skuOrArtikul, double cost) {
+        ProductCost pc = findByKey(ownerChatId, skuOrArtikul);
         if (pc == null) {
             return null;
         }
@@ -97,20 +111,20 @@ public class ProductCostService implements CostProvider {
         return pc;
     }
 
-    /** Все товары каталога, отсортированные по SKU. */
+    /** Все товары каталога магазина, отсортированные по SKU. */
     @Transactional(readOnly = true)
-    public List<ProductCost> list() {
-        return repository.findAllByOrderBySkuAsc();
+    public List<ProductCost> list(Long ownerChatId) {
+        return repository.findAllByOwnerChatIdOrderBySkuAsc(ownerChatId);
     }
 
     /** Себестоимость по SKU (0, если не задана) — реализация {@link CostProvider}. */
     @Override
     @Transactional(readOnly = true)
-    public double costOf(String sku) {
-        if (sku == null || sku.isBlank()) {
+    public double costOf(Long ownerChatId, String sku) {
+        if (ownerChatId == null || sku == null || sku.isBlank()) {
             return 0;
         }
-        return repository.findBySkuIgnoreCase(sku)
+        return repository.findByOwnerChatIdAndSkuIgnoreCase(ownerChatId, sku)
                 .map(ProductCost::getCost)
                 .orElse(0.0);
     }
