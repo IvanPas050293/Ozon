@@ -33,6 +33,10 @@ data/
 # Локальный конфиг с токеном бота (не коммитить)
 application-local.yml
 
+# Переменные окружения с токеном (docker compose)
+.env
+.env.local
+
 ### IntelliJ IDEA ###
 .idea/modules.xml
 .idea/jarRepositories.xml

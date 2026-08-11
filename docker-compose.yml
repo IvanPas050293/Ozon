@@ -1,0 +1,25 @@
+services:
+  ozon-bot:
+    build: .
+    image: ozon-bot:latest
+    container_name: ozon-bot
+    # Автозапуск после перезагрузки сервера; рестарт при падениях
+    restart: unless-stopped
+
+    environment:
+      BOT_USERNAME: ${BOT_USERNAME:-ozon_analytics_bot}
+      # Fail-fast: без BOT_TOKEN в .env контейнер не запустится
+      BOT_TOKEN: ${BOT_TOKEN:?Задайте BOT_TOKEN в файле .env}
+      TAX_SYSTEM: ${TAX_SYSTEM:-1}
+      TAX_RATE: ${TAX_RATE:-0.06}
+      ALLOWED_CHAT_IDS: ${ALLOWED_CHAT_IDS:-}
+
+    volumes:
+      # H2-база бота (настройки магазинов, себестоимость) живёт на диске сервера
+      - ./data:/app/data
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
