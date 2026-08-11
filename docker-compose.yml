@@ -13,6 +13,9 @@ services:
       TAX_SYSTEM: ${TAX_SYSTEM:-1}
       TAX_RATE: ${TAX_RATE:-0.06}
       ALLOWED_CHAT_IDS: ${ALLOWED_CHAT_IDS:-}
+      # На ряде российских VPS исходящий IPv4 до api.telegram.org заблокирован,
+      # а IPv6 работает. Заставляем Java ходить через IPv6.
+      JAVA_OPTS: ${JAVA_OPTS:--Xms64m -Xmx512m -Djava.net.preferIPv6Addresses=true}
 
     volumes:
       # H2-база бота (настройки магазинов, себестоимость) живёт на диске сервера
