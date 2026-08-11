@@ -26,10 +26,13 @@ import org.telegram.telegrambots.meta.api.objects.CallbackQuery;
 import org.telegram.telegrambots.meta.api.objects.Document;
 import org.telegram.telegrambots.meta.api.objects.Update;
 import org.telegram.telegrambots.meta.api.objects.message.Message;
-import org.telegram.telegrambots.meta.api.objects.replykeyboard.ReplyKeyboard;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.InlineKeyboardMarkup;
+import org.telegram.telegrambots.meta.api.objects.replykeyboard.ReplyKeyboard;
+import org.telegram.telegrambots.meta.api.objects.replykeyboard.ReplyKeyboardMarkup;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardButton;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardRow;
+import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.KeyboardButton;
+import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.KeyboardRow;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 import org.telegram.telegrambots.meta.generics.TelegramClient;
 
@@ -58,6 +61,17 @@ public class OzonBot implements SpringLongPollingBot, LongPollingUpdateConsumer 
     private static final String CALLBACK_TAX = "tax:";
     /** Callback кнопки «Статистика по товарам». */
     private static final String CALLBACK_STATS = "stats";
+    /** Callback кнопки «Себестоимость» (редактирование цен). */
+    private static final String CALLBACK_COST = "cost";
+
+    /** Кнопка «Налог» постоянной клавиатуры. */
+    private static final String BTN_TAX = "💸 Налог";
+    /** Кнопка «Статистика по товарам» постоянной клавиатуры. */
+    private static final String BTN_STATS = "📊 Статистика";
+    /** Кнопка «Dashboard» постоянной клавиатуры. */
+    private static final String BTN_DASH = "📈 Dashboard";
+    /** Кнопка «Себестоимость» постоянной клавиатуры. */
+    private static final String BTN_COST = "📦 Себестоимость";
 
     private static final String HELP = """
             📊 Экономика магазина Ozon
@@ -68,20 +82,40 @@ public class OzonBot implements SpringLongPollingBot, LongPollingUpdateConsumer 
 
             Бот распарсит их и покажет сводку дашборда: выручку, комиссии, логистику, прибыль, ДРР.
 
-            Себестоимость:
+            Команды:
+            /start — приветствие и настройка налога
+            /dashboard — показать дашборд (если файлы отправлены)
+            /tovary — статистика по товарам
+            /nalog — выбрать налоговую ставку (1–12%)
             /sebestoimost — задать себестоимость товаров кнопками
-            Нажмите товар → введите цену → кнопки появятся снова.
-            Когда цены проставлены всем товарам, бот покажет дашборд с учётом себестоимости.
-            (Отправьте «Отчет по начислениям», чтобы бот узнал товары.)
-
-            Налог:
-            /nalog — выбрать налоговую ставку магазина (1–12%)
-
-            Статистика по товарам:
-            /tovary — прибыль по каждому товару за 1 шт и за период, маржа, налог, реклама
-            (кнопка «📊 Статистика по товарам» под дашбордом)
-
             /reset — начать заново
+
+            Все команды можно нажимать кнопками постоянного меню внизу чата.
+            """;
+
+    /** Приветствие: описание возможностей бота + просьба ввести процент налога. */
+    private static final String WELCOME = """
+            👋 Привет! Я — бот «Экономика магазина Ozon».
+
+            📊 Что я умею:
+
+            🔹 Dashboard — считаю экономику магазина по файлам из ЛК Ozon:
+            выручку, комиссии, логистику, себестоимость, прибыль и ДРР.
+            Для этого отправьте два файла:
+              1. «Отчет по начислениям» (Финансы → Экономика магазина)
+              2. «Аналитика продвижения» (реклама)
+
+            🔹 Статистика по товарам — прибыль по каждому товару
+            (за 1 шт и за весь период), маржа, налог и расход на рекламу.
+
+            🔹 Себестоимость — задайте цену товара, чтобы прибыль
+            считалась с учётом себестоимости.
+
+            🔹 Налог — укажите вашу налоговую ставку (от 1 до 12%),
+            и все расчёты будут с учётом неё.
+
+            ➡️ Чтобы начать, выберите кнопку внизу или отправьте файлы.
+            А сейчас давайте настроим налог.
             """;
 
     private final BotProperties props;
@@ -161,6 +195,9 @@ public class OzonBot implements SpringLongPollingBot, LongPollingUpdateConsumer 
                 handleCommand(chatId, text.trim());
                 return;
             }
+            if (text != null && handleKeyboardButton(chatId, text)) {
+                return;
+            }
             UserSession session = sessionStore.get(chatId);
             if (session.getPendingCostSku() != null) {
                 // Ждём число — себестоимость для выбранного кнопкой товара.
@@ -178,8 +215,12 @@ public class OzonBot implements SpringLongPollingBot, LongPollingUpdateConsumer 
     private void handleCommand(Long chatId, String command) {
         // Команда прерывает ожидание ввода себестоимости.
         sessionStore.get(chatId).setPendingCostSku(null);
-        if (command.startsWith("/start") || command.startsWith("/help")) {
+        if (command.startsWith("/start")) {
+            sendWelcome(chatId);
+        } else if (command.startsWith("/help")) {
             send(chatId, HELP);
+        } else if (command.startsWith("/dashboard")) {
+            showDashboardIfReady(chatId, sessionStore.get(chatId));
         } else if (command.startsWith("/reset")) {
             sessionStore.reset(chatId);
             send(chatId, "Сброшено. Отправьте файлы заново.");
@@ -192,6 +233,43 @@ public class OzonBot implements SpringLongPollingBot, LongPollingUpdateConsumer 
         } else {
             send(chatId, "Неизвестная команда. /help");
         }
+    }
+
+    /** Приветствие: описание возможностей + просьба ввести процент налога, с постоянным меню внизу. */
+    private void sendWelcome(Long chatId) {
+        send(chatId, WELCOME, mainMenuReplyKeyboard());
+        // После описания — сразу предлагаем выбрать налоговую ставку.
+        handleNalog(chatId);
+    }
+
+    /** Кнопка постоянного меню внизу чата → соответствующая команда. Возвращает false, если текст не кнопка. */
+    private boolean handleKeyboardButton(Long chatId, String text) {
+        switch (text) {
+            case BTN_TAX -> handleCommand(chatId, "/nalog");
+            case BTN_STATS -> handleCommand(chatId, "/tovary");
+            case BTN_DASH -> handleCommand(chatId, "/dashboard");
+            case BTN_COST -> handleCommand(chatId, "/sebestoimost");
+            default -> {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** Постоянная клавиатура внизу чата: команды нажатием кнопки, без набора текста. */
+    private static ReplyKeyboardMarkup mainMenuReplyKeyboard() {
+        return ReplyKeyboardMarkup.builder()
+                .keyboard(List.of(
+                        new KeyboardRow(List.of(
+                                KeyboardButton.builder().text(BTN_DASH).build(),
+                                KeyboardButton.builder().text(BTN_TAX).build())),
+                        new KeyboardRow(List.of(
+                                KeyboardButton.builder().text(BTN_STATS).build(),
+                                KeyboardButton.builder().text(BTN_COST).build()))))
+                .resizeKeyboard(true)
+                .isPersistent(true)
+                .inputFieldPlaceholder("Выберите команду кнопкой")
+                .build();
     }
 
     /** Кнопки выбора налоговой ставки магазина (1–12%). */
@@ -276,13 +354,18 @@ public class OzonBot implements SpringLongPollingBot, LongPollingUpdateConsumer 
         }
     }
 
-    /** Кнопка под дашбордом — открыть статистику по товарам. */
+    /** Кнопки под дашбордом: статистика по товарам + редактирование себестоимости. */
     private static InlineKeyboardMarkup productStatsKeyboard() {
         return InlineKeyboardMarkup.builder()
-                .keyboard(List.of(new InlineKeyboardRow(InlineKeyboardButton.builder()
-                        .text("📊 Статистика по товарам")
-                        .callbackData(CALLBACK_STATS)
-                        .build())))
+                .keyboard(List.of(
+                        new InlineKeyboardRow(InlineKeyboardButton.builder()
+                                .text("📊 Статистика по товарам")
+                                .callbackData(CALLBACK_STATS)
+                                .build()),
+                        new InlineKeyboardRow(InlineKeyboardButton.builder()
+                                .text(BTN_COST)
+                                .callbackData(CALLBACK_COST)
+                                .build())))
                 .build();
     }
 
@@ -344,6 +427,8 @@ public class OzonBot implements SpringLongPollingBot, LongPollingUpdateConsumer 
                 handleSebCallback(chatId, data.substring(CALLBACK_SEB.length()));
             } else if (data.startsWith(CALLBACK_TAX)) {
                 handleTaxCallback(chatId, data.substring(CALLBACK_TAX.length()));
+            } else if (CALLBACK_COST.equals(data)) {
+                handleSebestoimost(chatId, "/sebestoimost");
             } else if (CALLBACK_STATS.equals(data)) {
                 handleProductStats(chatId);
             } else {
